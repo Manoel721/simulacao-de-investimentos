@@ -24,8 +24,8 @@ public class ResultadoSimulacaoDTO {
         this.valorFinal = valorFinal;
     }
 
-    public void setRentabilidadeEfetiva(Float rentabilidadeEfetiva) {
-        this.rentabilidadeEfetiva = rentabilidadeEfetiva;
+    public void setRentabilidadeEfetiva(float rentabilidadeEfetiva) {
+        this.rentabilidadeEfetiva = (Float) rentabilidadeEfetiva;
     }
 
     public void setPrazoMeses(Integer prazoMeses) {

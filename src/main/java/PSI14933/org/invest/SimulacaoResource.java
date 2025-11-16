@@ -1,5 +1,6 @@
 package PSI14933.org.invest;
 
+import com.fasterxml.jackson.databind.SerializationFeature;
 import jakarta.inject.Inject;
 import jakarta.persistence.EntityManager;
 import jakarta.ws.rs.*;
@@ -7,7 +8,19 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import jakarta.transaction.Transactional;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+import java.time.LocalDate;
+import java.util.*;
+import java.util.stream.Collectors;
+
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 @Path("/")
 @Produces(MediaType.APPLICATION_JSON)
@@ -19,6 +32,9 @@ public class SimulacaoResource {
 
     @Inject
     EntityManager em;
+
+    @Inject
+    SPPDRepository SPPDR;
 
     @GET
     public List<Investimento> listarInvestimentos() {
@@ -66,7 +82,7 @@ public class SimulacaoResource {
         SimulacaoResponseDTO responseDTO = new SimulacaoResponseDTO();
         responseDTO.setProdutoValidado(produtoDTO);
         responseDTO.setResultadoSimulacao(resultadoDTO);
-        responseDTO.setDataSimulacao(java.time.Instant.now().toString());
+        responseDTO.setDataSimulacao(Instant.now().toString());
 
         // Persistir entidade no banco
         SimulacaoEntity simulacaoEntity = new SimulacaoEntity();
@@ -93,7 +109,82 @@ public class SimulacaoResource {
                 .getResultList();
     }
 
+    @GET
+    @Path("/simulacoes/por-produto-dia")
+    @Produces(MediaType.APPLICATION_JSON)
+    public String listarPorProdutoDia() throws JsonProcessingException {
+
+        List<SimulacaoEntity> listaDatas = SPPDR.listAll();
+        Set<String> dattas = new HashSet<>(Set.of());
+
+        String jsonSaida = null;
+        for (SimulacaoEntity s1 : listaDatas){
+            dattas.add (s1.getDataSimulacao().substring(0, 10));
+        }
+        List<SimulacaoEntity> simulacoes = SPPDR.listAll();
+        for (String data : dattas) {
+            // Agrupamento por produto
+            Map<String, List<SimulacaoEntity>> agrupado = simulacoes.stream()
+                    .collect(Collectors.groupingBy(SimulacaoEntity::getProduto));
+
+            ObjectMapper mapper = new ObjectMapper();
+            ArrayNode resultado = mapper.createArrayNode();
+
+            for (Map.Entry<String, List<SimulacaoEntity>> entry : agrupado.entrySet()) {
+                String produto = entry.getKey();
+                List<SimulacaoEntity> lista = entry.getValue();
+
+                int quantidade = lista.size();
+                double mediaValorFinal = lista.stream().mapToDouble(SimulacaoEntity::getValorFinal).average().orElse(0);
+
+                ObjectNode obj = mapper.createObjectNode();
+                obj.put("produto", produto);
+                obj.put("data", data); // Data fixa conforme exemplo
+                obj.put("quantidadeSimulacoes", quantidade);
+                obj.put("mediaValorFinal", Math.round(mediaValorFinal * 100.0) / 100.0);
+
+                resultado.add(obj);
+            }
+            // Saída JSON
+            jsonSaida = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(resultado);
+        }
+        System.out.println(jsonSaida);
+
+       return jsonSaida;
+    }
+
+    @GET
+    @Path("/perfil-risco/{clienteId}")
+    @Produces(MediaType.APPLICATION_JSON)
+    public String listarPerfilRisco(@PathParam("clienteId") Long clienteId) throws JsonProcessingException {
+        List<SimulacaoEntity> simulacoes = SPPDR.listAll();
+        double volumeInvestimentos = 0.0;
+        int frequenciaMovimentacoes = 0;
+        String preferencia = null;
+        double mediaTempoResgate = 0.0;
+        for (SimulacaoEntity s1 : simulacoes){
+            if (s1.getClienteId().equals(clienteId)){
+                volumeInvestimentos += s1.getValorInvestido();
+                frequenciaMovimentacoes += 1;
+                mediaTempoResgate += s1.getPrazoMeses();
+            }
+            if (frequenciaMovimentacoes>0) {
+                mediaTempoResgate = mediaTempoResgate / frequenciaMovimentacoes;
+            }
+            if (mediaTempoResgate>=60){preferencia = "liquidez";}
+            else if (mediaTempoResgate<13) {preferencia = "rentabilidade";}
+            else {preferencia = "equilibrio";}
+        }
+        MotorRecomendacao perfil1 = new MotorRecomendacao (clienteId, volumeInvestimentos, frequenciaMovimentacoes, preferencia);
+        System.out.println(perfil1.toString());
+        ObjectMapper mapper = new ObjectMapper();
+        mapper.disable(SerializationFeature.FAIL_ON_EMPTY_BEANS);
+        // Then use this mapper to serialize your object
+        String json = mapper.writeValueAsString(perfil1);
+        return json;
+    }
+
     private Double calculaDados(Double valor, Integer prazoMeses, Float rentabilidade) {
-        return Math.ceil(valor + (valor * prazoMeses * rentabilidade));
+        return (Double) Math.ceil(valor + (valor * prazoMeses * rentabilidade));
     }
 }
